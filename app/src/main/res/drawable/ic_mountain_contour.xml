@@ -1,0 +1,53 @@
+<?xml version="1.0" encoding="utf-8"?>
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="120dp"
+    android:height="46dp"
+    android:viewportWidth="120"
+    android:viewportHeight="46">
+
+    <!-- Elevation Contour Line 1 -->
+    <path
+        android:strokeColor="#20004050"
+        android:strokeWidth="1.2"
+        android:pathData="M 0,38 C 20,34 40,42 60,36 C 80,30 100,38 120,35" />
+
+    <!-- Elevation Contour Line 2 -->
+    <path
+        android:strokeColor="#35167B85"
+        android:strokeWidth="1.2"
+        android:pathData="M 0,30 C 25,25 45,32 70,27 C 90,22 105,28 120,24" />
+
+    <!-- Back Mountain Peak -->
+    <path
+        android:fillColor="#18167B85"
+        android:strokeColor="#40167B85"
+        android:strokeWidth="1"
+        android:pathData="M 38,42 L 66,14 L 92,42 Z" />
+
+    <!-- Front Main Mountain Peak -->
+    <path
+        android:fillColor="#250F2C42"
+        android:strokeColor="#167B85"
+        android:strokeWidth="1.5"
+        android:pathData="M 8,42 L 42,8 L 74,42 Z" />
+
+    <!-- Main Ridge Line -->
+    <path
+        android:strokeColor="#AA0000"
+        android:strokeWidth="1.5"
+        android:strokeLineCap="round"
+        android:pathData="M 42,8 L 48,22 L 74,42" />
+
+    <!-- Secondary Peak -->
+    <path
+        android:fillColor="#20AA0000"
+        android:strokeColor="#AA0000"
+        android:strokeWidth="1.2"
+        android:pathData="M 68,42 L 92,18 L 114,42 Z" />
+
+    <!-- Secondary Ridge Line -->
+    <path
+        android:strokeColor="#167B85"
+        android:strokeWidth="1"
+        android:pathData="M 92,18 L 97,28 L 114,42" />
+</vector>

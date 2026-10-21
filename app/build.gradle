@@ -1,0 +1,32 @@
+plugins {
+    id 'com.android.application'
+    id 'com.google.gms.google-services' // Plugin Firebase Google Services
+}
+
+
+android {
+    namespace 'id.hifaki.app'
+    compileSdk 37
+
+    defaultConfig {
+        applicationId 'id.hifaki.app'
+        minSdk 26
+        targetSdk 37
+        versionCode 4
+        versionName '1.2.0'
+    }
+
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_17
+        targetCompatibility JavaVersion.VERSION_17
+    }
+}
+
+dependencies {
+    implementation 'androidx.activity:activity:1.13.0'
+    implementation 'androidx.core:core:1.19.1'
+    // Firebase BoM, Realtime Database & Storage
+    implementation platform('com.google.firebase:firebase-bom:34.19.0')
+    implementation 'com.google.firebase:firebase-database'
+    implementation 'com.google.firebase:firebase-storage'
+}

@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "38992261363",
+    "project_id": "hifaki-100403",
+    "storage_bucket": "hifaki-100403.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:38992261363:android:be25cb3a6ae856c6a28786",
+        "android_client_info": {
+          "package_name": "id.hifaki.app"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyCHlfJUmd2wkG503K6VTDQpC_JW4dtD0ZM"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}
