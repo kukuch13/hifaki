@@ -33,8 +33,9 @@ public final class BleClient {
         void onReading(Reading reading);
     }
 
-    public static final UUID SERVICE = UUID.fromString("c7e2b450-8a9f-4b55-9c57-6741f3a8d001");
-    public static final UUID DATA = UUID.fromString("c7e2b450-8a9f-4b55-9c57-6741f3a8d002");
+    public static final UUID SERVICE = UUID.fromString("4fafc201-1fb5-459e-8fcc-c5c9c331914b");
+    public static final UUID DATA = UUID.fromString("beb5483e-36e1-4688-b7f5-ea07361b26a8");
+    public static final UUID COMMAND = UUID.fromString("82b9e6e1-593a-456f-9b1c-7812a34f56d9");
     private static final UUID CCCD = UUID.fromString("00002902-0000-1000-8000-00805f9b34fb");
 
     private final Context context;
@@ -45,6 +46,7 @@ public final class BleClient {
     private BluetoothGatt gatt;
     private ScanCallback scanCallback;
     private BluetoothGattCharacteristic data;
+    private BluetoothGattCharacteristic command;
     private boolean closed;
 
     public BleClient(Context context, Listener listener) {
@@ -58,6 +60,8 @@ public final class BleClient {
     }
 
     public boolean available() { return adapter != null && adapter.isEnabled(); }
+    
+    public boolean isConnected() { return gatt != null; }
 
     public void scan() {
         if (closed || !available()) { status("Aktifkan Bluetooth pada ponsel."); return; }
@@ -109,7 +113,9 @@ public final class BleClient {
             int state = intent.getIntExtra(BluetoothDevice.EXTRA_BOND_STATE, BluetoothDevice.BOND_NONE);
             if (state == BluetoothDevice.BOND_BONDED) {
                 status("Terpasang aman. Membaca sensor…");
-                gatt.discoverServices();
+                main.postDelayed(() -> {
+                    if (gatt != null) gatt.discoverServices();
+                }, 600);
             } else if (state == BluetoothDevice.BOND_NONE) {
                 status("Pemasangan gagal. Ulangi dan masukkan kode alat.");
             }
@@ -120,15 +126,9 @@ public final class BleClient {
         @Override public void onConnectionStateChange(BluetoothGatt connection, int code, int state) {
             if (closed) return;
             if (code == BluetoothGatt.GATT_SUCCESS && state == BluetoothProfile.STATE_CONNECTED) {
-                if (connection.getDevice().getBondState() == BluetoothDevice.BOND_BONDED) {
-                    status("Terhubung. Membaca sensor…");
-                    connection.discoverServices();
-                } else if (connection.getDevice().getBondState() == BluetoothDevice.BOND_BONDING) {
-                    status("Menunggu pemasangan Bluetooth…");
-                } else {
-                    status("Masukkan kode pairing alat pada ponsel.");
-                    if (!connection.getDevice().createBond()) status("Gagal memulai pemasangan BLE.");
-                }
+                status("Terhubung. Membaca sensor…");
+                // Langsung discoverServices tanpa memaksa proses pairing (bonding)
+                main.postDelayed(connection::discoverServices, 600);
             } else if (state == BluetoothProfile.STATE_DISCONNECTED || code != BluetoothGatt.GATT_SUCCESS) {
                 data = null;
                 status("Alat terputus. Data lama tidak dipakai untuk pemeriksaan baru.");
@@ -142,8 +142,13 @@ public final class BleClient {
             if (code != BluetoothGatt.GATT_SUCCESS) { status("Layanan BLE belum terbaca."); return; }
             BluetoothGattService service = connection.getService(SERVICE);
             data = service == null ? null : service.getCharacteristic(DATA);
+            command = service == null ? null : service.getCharacteristic(COMMAND);
             if (data == null) { status("Firmware alat tidak sesuai protokol HIFAKI."); return; }
-            if (!connection.readCharacteristic(data)) status("Gagal membaca karakteristik sensor.");
+            
+            // Berikan jeda tambahan agar sistem Android siap membaca dan mengaktifkan notifikasi
+            main.postDelayed(() -> {
+                if (!connection.readCharacteristic(data)) status("Gagal membaca karakteristik sensor.");
+            }, 300);
         }
 
         @Override public void onCharacteristicRead(BluetoothGatt connection,
@@ -205,6 +210,38 @@ public final class BleClient {
     }
 
     private void status(String value) { main.post(() -> listener.onStatus(value)); }
+
+    @SuppressWarnings("deprecation")
+    public void sendCommand(String commandText) {
+        if (gatt == null || command == null) {
+            status("BLE belum siap untuk mengirim perintah.");
+            return;
+        }
+        byte[] payload = commandText.getBytes();
+        boolean success;
+        if (Build.VERSION.SDK_INT >= 33) {
+            success = gatt.writeCharacteristic(command, payload, BluetoothGattCharacteristic.WRITE_TYPE_DEFAULT) == android.bluetooth.BluetoothStatusCodes.SUCCESS;
+        } else {
+            command.setValue(payload);
+            success = gatt.writeCharacteristic(command);
+        }
+        if (!success) {
+            status("Gagal mengirim perintah ke alat.");
+        }
+    }
+
+    public void disconnect() {
+        stopScan();
+        if (gatt != null) {
+            gatt.disconnect();
+            gatt.close();
+            gatt = null;
+        }
+        data = null;
+        command = null;
+        status("Sinyal BLE diputuskan. Siap gunakan mode Online.");
+        main.post(() -> listener.onReading(null));
+    }
 
     public void close() {
         closed = true;

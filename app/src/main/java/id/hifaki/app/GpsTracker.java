@@ -6,6 +6,7 @@ import android.content.pm.PackageManager;
 import android.location.Location;
 import android.location.LocationListener;
 import android.location.LocationManager;
+import android.os.Build;
 import android.os.Looper;
 import android.os.SystemClock;
 
@@ -18,19 +19,32 @@ public final class GpsTracker {
     private final Runnable onChange;
     private final LocationListener listener = new LocationListener() {
         @Override public void onLocationChanged(Location location) {
-            latest = new Location(location);
+            if (latest != null) {
+                // Gunakan lokasi baru jika lebih akurat ATAU lebih baru
+                boolean isMoreAccurate = location.hasAccuracy() && latest.hasAccuracy() &&
+                        location.getAccuracy() < latest.getAccuracy();
+                boolean isNewer = location.getElapsedRealtimeNanos() > latest.getElapsedRealtimeNanos();
+                
+                if (isMoreAccurate || isNewer) {
+                    latest = new Location(location);
+                }
+            } else {
+                latest = new Location(location);
+            }
             status = "Sinyal GPS diterima";
             onChange.run();
         }
 
         @Override public void onProviderDisabled(String provider) {
-            latest = null;
-            status = "GPS ponsel dimatikan";
-            onChange.run();
+            if (!isGpsEnabled()) {
+                latest = null;
+                status = "GPS ponsel dimatikan";
+                onChange.run();
+            }
         }
 
         @Override public void onProviderEnabled(String provider) {
-            status = "Mencari satelit GPS…";
+            status = "Mencari lokasi…";
             onChange.run();
         }
     };
@@ -49,10 +63,18 @@ public final class GpsTracker {
     }
 
     public boolean isGpsEnabled() {
-        try { return manager != null && manager.isProviderEnabled(LocationManager.GPS_PROVIDER); }
-        catch (IllegalArgumentException e) { return false; }
+        if (manager == null) return false;
+        if (Build.VERSION.SDK_INT >= 28) {
+            return manager.isLocationEnabled();
+        } else {
+            try {
+                return manager.isProviderEnabled(LocationManager.GPS_PROVIDER) || 
+                       manager.isProviderEnabled(LocationManager.NETWORK_PROVIDER);
+            } catch (IllegalArgumentException e) { return false; }
+        }
     }
 
+    @android.annotation.SuppressLint("MissingPermission")
     public void start() {
         if (listening) return;
         latest = null; // Jangan gunakan koordinat pasien/posisi sebelumnya.
@@ -61,15 +83,30 @@ public final class GpsTracker {
         } else if (!isGpsEnabled()) {
             status = "Aktifkan Lokasi/GPS di pengaturan ponsel";
         } else {
+            boolean requested = false;
             try {
-                manager.requestLocationUpdates(LocationManager.GPS_PROVIDER, 5000L, 0f,
-                        listener, Looper.getMainLooper());
+                // Provider Jaringan: Mengunci lokasi kasar lebih cepat via BTS/Wi-Fi
+                if (manager.isProviderEnabled(LocationManager.NETWORK_PROVIDER)) {
+                    manager.requestLocationUpdates(LocationManager.NETWORK_PROVIDER, 2000L, 0f,
+                            listener, Looper.getMainLooper());
+                    requested = true;
+                }
+            } catch (Exception ignored) { }
+            
+            try {
+                // Provider Satelit GPS: Mencari presisi tinggi
+                if (manager.isProviderEnabled(LocationManager.GPS_PROVIDER)) {
+                    manager.requestLocationUpdates(LocationManager.GPS_PROVIDER, 2000L, 0f,
+                            listener, Looper.getMainLooper());
+                    requested = true;
+                }
+            } catch (Exception ignored) { }
+            
+            if (requested) {
                 listening = true;
-                status = "Mencari satelit GPS… coba di tempat terbuka";
-            } catch (SecurityException e) {
-                status = "Izin lokasi presisi belum diberikan";
-            } catch (IllegalArgumentException e) {
-                status = "Ponsel tidak menyediakan GPS";
+                status = "Mencari lokasi (GPS + Jaringan)…";
+            } else {
+                status = "Ponsel tidak mendukung pelacakan lokasi";
             }
         }
         onChange.run();

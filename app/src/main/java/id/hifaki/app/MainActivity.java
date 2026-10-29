@@ -78,7 +78,10 @@ public final class MainActivity extends ComponentActivity implements BleClient.L
     private Float verifiedCore;
     private boolean danger;
     private String bleStatus = "Belum terhubung • data bisa dicatat offline";
-    private TextView connectionText, skinText, heartText, altitudeText, batteryText, freshnessText, assessmentText;
+    private boolean warmerOn;
+    private TextView warmerStatusText;
+    private Button warmerButton;
+    private TextView connectionText, skinText, heartText, spo2Text, altitudeText, freshnessText, assessmentText;
     private TextView gpsCoordinates, gpsStatus;
     private ImageView photoPreview;
     private TextView photoNote;
@@ -87,6 +90,7 @@ public final class MainActivity extends ComponentActivity implements BleClient.L
     private OnBackPressedCallback backToHome;
     private DatabaseReference mDatabase;
     private ValueEventListener recordsListener;
+    private ValueEventListener liveSensorListener;
 
     @Override protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
@@ -185,6 +189,7 @@ public final class MainActivity extends ComponentActivity implements BleClient.L
         if (gps != null && page == 1 && gps.hasPrecisePermission()) gps.start();
         syncPendingRecordsToFirebase();
         listenForFirebaseRecords();
+        listenForFirebaseLiveSensor();
         SyncJob.schedule(this);
     }
 
@@ -213,7 +218,9 @@ public final class MainActivity extends ComponentActivity implements BleClient.L
     }
 
     private void render() {
-        connectionText = skinText = heartText = altitudeText = batteryText = freshnessText = assessmentText = null;
+        connectionText = skinText = heartText = spo2Text = altitudeText = freshnessText = assessmentText = null;
+        warmerStatusText = null;
+        warmerButton = null;
         gpsCoordinates = gpsStatus = null;
         photoPreview = null;
         photoNote = null;
@@ -277,6 +284,16 @@ public final class MainActivity extends ComponentActivity implements BleClient.L
         Ui.add(safety, Ui.text(this, "Pindahkan dari dingin, lepaskan pakaian basah, selimuti, dan hangatkan bagian tengah tubuh secara bertahap.", 14, false, Ui.MUTED), 0);
         Ui.add(body, safety, 18);
 
+        LinearLayout ref = Ui.card(this);
+        Ui.add(ref, Ui.text(this, "Referensi Medis", 19, true, Ui.NAVY), 12);
+        Ui.add(ref, Ui.text(this, "SUHU INTI TUBUH", 12, true, Ui.TEAL), 6);
+        Ui.add(ref, Ui.text(this, "• Normal: 36,5 – 37,5 °C\n• Hipotermia Ringan: 32 – 35 °C\n• Hipotermia Sedang: 28 – 32 °C\n• Hipotermia Berat: < 28 °C", 14, false, Ui.NAVY), 12);
+        Ui.add(ref, Ui.text(this, "DENYUT JANTUNG NORMAL (NADI)", 12, true, Ui.TEAL), 6);
+        Ui.add(ref, Ui.text(this, "• Dewasa: 60 – 100 bpm\n• Anak (1–10 thn): 70 – 120 bpm\n• Bayi (<1 thn): 100 – 160 bpm", 14, false, Ui.NAVY), 8);
+        Ui.add(ref, Ui.text(this, "Catatan: Pada kasus hipotermia, tubuh akan merespons dengan menurunkan laju denyut jantung (bradikardia).", 13, false, Ui.MUTED), 10);
+        Ui.add(ref, Ui.text(this, "Sumber: World Health Organization (WHO) & Panduan Medis Klinis", 11, false, Ui.MUTED), 0);
+        Ui.add(body, ref, 18);
+
         LinearLayout steps = Ui.card(this);
         Ui.add(steps, Ui.text(this, "Cara kerja HIFAKI", 19, true, Ui.NAVY), 12);
         Ui.add(steps, Ui.text(this, "01  Hubungkan alat lewat Bluetooth\n02  Periksa sensor dan aktifkan GPS bila diperlukan\n03  Simpan catatan di ponsel\n04  Sinkron otomatis bila internet tersedia", 15, false, Ui.NAVY), 14);
@@ -301,14 +318,41 @@ public final class MainActivity extends ComponentActivity implements BleClient.L
         Ui.add(conn, Ui.text(this, "KONEKSI ALAT", 12, true, Ui.TEAL), 8);
         connectionText = Ui.text(this, bleStatus, 16, true, Ui.NAVY);
         Ui.add(conn, connectionText, 12);
-        Button scan = Ui.button(this, "Cari & hubungkan HIFAKI", Ui.TEAL);
+        
+        LinearLayout bleBtns = new LinearLayout(this);
+        bleBtns.setOrientation(LinearLayout.HORIZONTAL);
+        
+        Button scan = Ui.button(this, "Mode Offline (BLE)", Ui.TEAL);
         scan.setOnClickListener(v -> startBle());
-        Ui.add(conn, scan, 0);
+        bleBtns.addView(scan, new LinearLayout.LayoutParams(0, -2, 1));
+        
+        View gap = new View(this);
+        bleBtns.addView(gap, new LinearLayout.LayoutParams(Ui.dp(this, 10), 0));
+        
+        Button disconnect = Ui.button(this, "Mode Online", Ui.MUTED);
+        disconnect.setOnClickListener(v -> {
+            if (ble != null) ble.disconnect();
+            toast("Mode Online aktif. Mendengarkan data dari Firebase.");
+        });
+        bleBtns.addView(disconnect, new LinearLayout.LayoutParams(0, -2, 1));
+        
+        Ui.add(conn, bleBtns, 0);
         Ui.add(body, conn, 12);
 
         skinText = metric(body, "SUHU KONTAK / PERMUKAAN", "— °C", "Bukan suhu inti; tidak untuk diagnosis hipotermia");
         heartText = metric(body, "DENYUT JANTUNG", "— bpm", "Letakkan jari pada MAX30102 hingga pembacaan stabil");
+        spo2Text = metric(body, "SATURASI OKSIGEN (SpO2)", "— %", "Kadar oksigen dalam darah (MAX30102)");
         altitudeText = metric(body, "KETINGGIAN ESTIMASI", "— m dpl", "Dihitung dari tekanan BMP280 dan tekanan acuan");
+
+        LinearLayout warmerCard = Ui.card(this);
+        Ui.add(warmerCard, Ui.text(this, "RELAY / JAKET PENGHANGAT", 12, true, Ui.TEAL), 8);
+        warmerStatusText = Ui.text(this, warmerOn ? "Pemanas Jaket: AKTIF (ON)" : "Pemanas Jaket: MATI (OFF)", 16, true, warmerOn ? Ui.RED : Ui.NAVY);
+        Ui.add(warmerCard, warmerStatusText, 10);
+        warmerButton = Ui.button(this, warmerOn ? "Matikan Jaket Penghangat (OFF)" : "Nyalakan Jaket Penghangat (ON)", warmerOn ? Ui.RED : Ui.TEAL);
+        warmerButton.setOnClickListener(v -> toggleWarmerState());
+        Ui.add(warmerCard, warmerButton, 8);
+        Ui.add(warmerCard, Ui.text(this, "Kontrol relay elemen pemanas (heater PWM / Relay) pada jaket penghangat via Firebase & BLE.", 12, false, Ui.MUTED), 0);
+        Ui.add(body, warmerCard, 12);
 
         LinearLayout location = Ui.card(this);
         Ui.add(location, Ui.text(this, "GPS PONSEL • TANPA INTERNET", 14, true, Ui.TEAL), 7);
@@ -337,8 +381,6 @@ public final class MainActivity extends ComponentActivity implements BleClient.L
         Ui.add(body, location, 12);
 
         LinearLayout info = Ui.card(this);
-        batteryText = Ui.text(this, "Baterai alat: —", 14, true, Ui.NAVY);
-        Ui.add(info, batteryText, 5);
         freshnessText = Ui.text(this, "Menunggu data sensor", 13, false, Ui.MUTED);
         Ui.add(info, freshnessText, 0);
         Ui.add(body, info, 12);
@@ -388,7 +430,7 @@ public final class MainActivity extends ComponentActivity implements BleClient.L
         });
         Ui.add(exam, remove, 8);
         Ui.add(exam, Ui.text(this, "Foto disimpan privat di ponsel dan tidak ikut dikirim ke server.", 12, false, Ui.MUTED), 12);
-        Button save = Ui.button(this, "Simpan pemeriksaan offline", Ui.RED);
+        Button save = Ui.button(this, "Simpan Pemeriksaan", Ui.RED);
         save.setOnClickListener(v -> saveRecord());
         Ui.add(exam, save, 0);
         Ui.add(body, exam, 0);
@@ -458,8 +500,8 @@ public final class MainActivity extends ComponentActivity implements BleClient.L
         Reading r = fresh ? current : null;
         skinText.setText(r != null && r.skinC != null ? String.format(ID, "%.2f °C", r.skinC) : "— °C");
         heartText.setText(r != null && r.bpm != null ? r.bpm + " bpm" : "— bpm");
+        if (spo2Text != null) spo2Text.setText(r != null && r.spo2 != null ? r.spo2 + " %" : "— %");
         altitudeText.setText(r != null && r.altitudeM != null ? r.altitudeM + " mdpl" : "— mdpl");
-        batteryText.setText("Baterai alat: " + (r != null && r.batteryPct != null ? r.batteryPct + "%" : "tidak diukur"));
         freshnessText.setText(r == null ? "Data tidak tersedia / sudah kedaluwarsa" :
                 "Data baru • " + new SimpleDateFormat("HH:mm:ss", ID).format(new Date(r.receivedAt)));
         if (assessmentText != null) updateAssessment();
@@ -559,7 +601,7 @@ public final class MainActivity extends ComponentActivity implements BleClient.L
         try {
             photoFile = photos.persist(draftPhoto);
             recordId = store.save(name, valid, verifiedCore, danger, fix, photoFile);
-            pushRecordToFirebase(recordId, name, valid, verifiedCore, danger, fix);
+            pushRecordToFirebase(recordId, name, valid, verifiedCore, danger, fix, photoFile);
         } catch (Exception e) {
             photos.deleteSaved(photoFile);
             toast("Penyimpanan gagal. Periksa ruang penyimpanan dan coba lagi.");
@@ -639,18 +681,46 @@ public final class MainActivity extends ComponentActivity implements BleClient.L
             if (!record.name.toLowerCase(ID).contains(query.toLowerCase(ID))) continue;
             matches++;
             LinearLayout card = Ui.card(this);
-            Ui.add(card, Ui.text(this, record.name, 18, true, Ui.NAVY), 5);
-            Ui.add(card, Ui.text(this, record.status, 14, true,
-                    Assessment.urgent(record.coreC, record.danger) ? Ui.RED : Ui.TEAL), 6);
-            Ui.add(card, Ui.text(this, "Suhu kontak " + f(record.skinC, "°C") + "   •   Nadi " + f(record.bpm, "bpm"), 13, false, Ui.NAVY), 5);
+
+            LinearLayout headerRow = new LinearLayout(this);
+            headerRow.setOrientation(LinearLayout.HORIZONTAL);
+            headerRow.setGravity(Gravity.CENTER_VERTICAL);
+
+            LinearLayout textCol = Ui.column(this);
+            Ui.add(textCol, Ui.text(this, record.name, 18, true, Ui.NAVY), 3);
+            Ui.add(textCol, Ui.text(this, record.status, 14, true,
+                    Assessment.urgent(record.coreC, record.danger) ? Ui.RED : Ui.TEAL), 0);
+
+            headerRow.addView(textCol, new LinearLayout.LayoutParams(0, -2, 1));
+
+            Bitmap photo = photos.previewSaved(record.photoFile);
+            ImageView thumb = new ImageView(this);
+            if (photo != null) {
+                thumb.setImageBitmap(photo);
+                thumb.setScaleType(ImageView.ScaleType.CENTER_CROP);
+                thumb.setBackground(Ui.bg(this, 0xffe4f4f3, 10));
+                thumb.setOnClickListener(v -> showFullPhoto(record.photoFile, record.name));
+            } else {
+                thumb.setImageResource(R.drawable.ic_hifaki);
+                thumb.setScaleType(ImageView.ScaleType.FIT_CENTER);
+                thumb.setPadding(Ui.dp(this, 10), Ui.dp(this, 10), Ui.dp(this, 10), Ui.dp(this, 10));
+                thumb.setBackground(Ui.bg(this, 0xfff0f4f8, 10));
+            }
+            LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(Ui.dp(this, 60), Ui.dp(this, 60));
+            lp.setMargins(Ui.dp(this, 8), 0, 0, 0);
+            headerRow.addView(thumb, lp);
+
+            Ui.add(card, headerRow, 8);
+            Ui.add(card, Ui.text(this, "Suhu kontak " + f(record.skinC, "°C") + "   •   Nadi " + f(record.bpm, "bpm") + "   •   SpO2 " + f(record.spo2, "%"), 13, false, Ui.NAVY), 5);
             Ui.add(card, Ui.text(this, "Suhu inti " + f(record.coreC, "°C") + "   •   " +
                     (record.synced ? "Tersinkron" : "Lokal / menunggu kirim"), 12, false, Ui.MUTED), 5);
-            if (record.latitude != null && record.longitude != null)
-                Ui.add(card, Ui.text(this, String.format(Locale.US, "GPS %.6f, %.6f", record.latitude,
-                        record.longitude), 12, false, Ui.TEAL), 5);
-            if (record.photoFile != null)
-                Ui.add(card, Ui.text(this, "Foto pemeriksaan tersimpan di ponsel", 12, false, Ui.TEAL), 5);
+            if (record.latitude != null && record.longitude != null) {
+                TextView gpsText = Ui.text(this, String.format(Locale.US, "🗺️ GPS %.6f, %.6f (Buka Peta)", record.latitude, record.longitude), 12, false, Ui.TEAL);
+                gpsText.setOnClickListener(v -> openInMaps(record.latitude, record.longitude, record.name));
+                Ui.add(card, gpsText, 5);
+            }
             Ui.add(card, Ui.text(this, new SimpleDateFormat("dd MMM yyyy • HH:mm", ID).format(new Date(record.time)), 12, false, Ui.MUTED), 0);
+
             card.setOnClickListener(v -> detail(record));
             card.setOnLongClickListener(v -> { deleteDialog(record); return true; });
             Ui.add(rows, card, 12);
@@ -664,30 +734,96 @@ public final class MainActivity extends ComponentActivity implements BleClient.L
                 (r.gpsAccuracyM == null ? "" : String.format(ID, " (±%.0f m)", r.gpsAccuracyM)) +
                 (r.gpsAt == null ? "" : " • " + new SimpleDateFormat("HH:mm:ss", ID).format(new Date(r.gpsAt)));
         String body = "Waktu: " + new SimpleDateFormat("dd MMMM yyyy HH:mm:ss", ID).format(new Date(r.time)) +
-                "\nSuhu kontak: " + f(r.skinC, "°C") + "\nNadi: " + f(r.bpm, "bpm") +
+                "\nSuhu kontak: " + f(r.skinC, "°C") + "\nNadi: " + f(r.bpm, "bpm") + "\nSpO2: " + f(r.spo2, "%") +
                 "\nKetinggian estimasi: " + f(r.altitudeM, "m dpl") +
                 "\nGPS: " + location +
                 "\nSuhu inti terverifikasi: " + f(r.coreC, "°C") +
                 "\nGejala bahaya: " + (r.danger ? "Ya" : "Tidak dicatat") +
-                "\nStatus: " + r.status + "\nSinkron: " + (r.synced ? "Terkirim" : "Belum terkirim");
-        AlertDialog.Builder dialog = new AlertDialog.Builder(this).setTitle(r.name)
-                .setNegativeButton("Tutup", null)
-                .setNeutralButton("Hapus", (d, which) -> deleteDialog(r));
+                "\nStatus: " + r.status + "\nSinkron: " + (r.synced ? "Tersinkron" : "Lokal / menunggu kirim");
+
         Bitmap savedPhoto = photos.previewSaved(r.photoFile);
+
+        ScrollView scroll = new ScrollView(this);
+        LinearLayout layout = Ui.column(this);
+        layout.setPadding(Ui.dp(this, 20), Ui.dp(this, 12), Ui.dp(this, 20), Ui.dp(this, 16));
+
         if (savedPhoto != null) {
-            ScrollView scroll = new ScrollView(this);
-            LinearLayout layout = Ui.column(this);
-            layout.setPadding(Ui.dp(this, 20), Ui.dp(this, 8), Ui.dp(this, 20), Ui.dp(this, 12));
             ImageView image = new ImageView(this);
             image.setImageBitmap(savedPhoto);
             image.setScaleType(ImageView.ScaleType.FIT_CENTER);
-            layout.addView(image, new LinearLayout.LayoutParams(-1, Ui.dp(this, 240)));
-            Ui.add(layout, Ui.text(this, body + "\nFoto: hanya di ponsel", 14, false, Ui.NAVY), 0);
-            scroll.addView(layout);
-            dialog.setView(scroll);
-        } else dialog.setMessage(body + (r.photoFile == null ? "" : "\nFoto: tidak tersedia"));
-        if (r.latitude != null && r.longitude != null)
-            dialog.setPositiveButton("Buka Peta", (d, which) -> openInMaps(r.latitude, r.longitude, r.name));
+            image.setOnClickListener(v -> showFullPhoto(r.photoFile, r.name));
+            layout.addView(image, new LinearLayout.LayoutParams(-1, Ui.dp(this, 220)));
+
+            Button viewPhotoBtn = Ui.button(this, "🔍 Buka Foto Ukuran Penuh", Ui.TEAL);
+            viewPhotoBtn.setOnClickListener(v -> showFullPhoto(r.photoFile, r.name));
+            Ui.add(layout, viewPhotoBtn, 12);
+        } else {
+            ImageView placeholder = new ImageView(this);
+            placeholder.setImageResource(R.drawable.ic_hifaki);
+            placeholder.setScaleType(ImageView.ScaleType.FIT_CENTER);
+            placeholder.setPadding(Ui.dp(this, 16), Ui.dp(this, 16), Ui.dp(this, 16), Ui.dp(this, 16));
+            placeholder.setBackground(Ui.bg(this, 0xfff0f4f8, 12));
+            layout.addView(placeholder, new LinearLayout.LayoutParams(-1, Ui.dp(this, 100)));
+            Ui.add(layout, Ui.text(this, "Foto: Tidak ada foto (tidak diambil saat menyimpan)", 12, false, Ui.MUTED), 12);
+        }
+
+        double mapLat = 0, mapLng = 0;
+        boolean hasGps = false;
+        if (r.latitude != null && r.longitude != null) {
+            mapLat = r.latitude;
+            mapLng = r.longitude;
+            hasGps = true;
+        } else if (gps != null) {
+            Location fresh = gps.freshFix();
+            if (fresh != null) {
+                mapLat = fresh.getLatitude();
+                mapLng = fresh.getLongitude();
+                hasGps = true;
+            }
+        }
+
+        if (hasGps) {
+            final double targetLat = mapLat;
+            final double targetLng = mapLng;
+            Button openMapBtn = Ui.button(this, "🗺️ Buka Peta Google Maps", Ui.NAVY);
+            openMapBtn.setOnClickListener(v -> openInMaps(targetLat, targetLng, r.name));
+            Ui.add(layout, openMapBtn, 12);
+        }
+
+        Ui.add(layout, Ui.text(this, body + (r.photoFile != null ? "\nFoto: tersimpan privat di ponsel" : ""), 14, false, Ui.NAVY), 0);
+        scroll.addView(layout);
+
+        AlertDialog.Builder builder = new AlertDialog.Builder(this)
+                .setTitle(r.name)
+                .setView(scroll)
+                .setNegativeButton("Tutup", null)
+                .setNeutralButton("Hapus Catatan", (d, which) -> deleteDialog(r));
+
+        if (hasGps) {
+            final double targetLat = mapLat;
+            final double targetLng = mapLng;
+            builder.setPositiveButton("Buka Peta", (d, which) -> openInMaps(targetLat, targetLng, r.name));
+        }
+
+        builder.show();
+    }
+
+    private void showFullPhoto(String photoFile, String title) {
+        Bitmap full = photos.fullSaved(photoFile);
+        if (full == null) {
+            toast("Foto tidak tersedia.");
+            return;
+        }
+        AlertDialog.Builder builder = new AlertDialog.Builder(this, android.R.style.Theme_Black_NoTitleBar_Fullscreen);
+        ImageView view = new ImageView(this);
+        view.setImageBitmap(full);
+        view.setScaleType(ImageView.ScaleType.FIT_CENTER);
+        view.setBackgroundColor(Color.BLACK);
+
+        AlertDialog dialog = builder.setView(view)
+                .setPositiveButton("Tutup", null)
+                .create();
+        view.setOnClickListener(v -> dialog.dismiss());
         dialog.show();
     }
 
@@ -721,6 +857,45 @@ public final class MainActivity extends ComponentActivity implements BleClient.L
     private void settings() {
         LinearLayout body = scrollPage();
         section(body, "Pengaturan", "Online opsional; BLE dan riwayat tetap berjalan tanpa server.");
+
+        LinearLayout about = Ui.card(this);
+        Ui.add(about, Ui.text(this, "TENTANG APLIKASI", 12, true, Ui.TEAL), 8);
+
+        LinearLayout titleRow = new LinearLayout(this);
+        titleRow.setOrientation(LinearLayout.HORIZONTAL);
+        titleRow.setGravity(Gravity.CENTER_VERTICAL);
+
+        ImageView logo = new ImageView(this);
+        logo.setImageResource(R.drawable.ic_hifaki);
+        titleRow.addView(logo, new LinearLayout.LayoutParams(Ui.dp(this, 42), Ui.dp(this, 42)));
+
+        LinearLayout textCol = Ui.column(this);
+        textCol.setPadding(Ui.dp(this, 10), 0, 0, 0);
+        Ui.add(textCol, Ui.text(this, "HIFAKI", 20, true, 0xffaa0000), 2);
+        Ui.add(textCol, Ui.text(this, "Hypothermia First Aid Kit", 13, false, Ui.NAVY), 0);
+        titleRow.addView(textCol, new LinearLayout.LayoutParams(0, -2, 1));
+
+        Ui.add(about, titleRow, 12);
+
+        String verName = "1.2.0";
+        try {
+            verName = getPackageManager().getPackageInfo(getPackageName(), 0).versionName;
+        } catch (Exception ignored) { }
+
+        Ui.add(about, Ui.text(this, "Versi Aplikasi: v" + verName + " (Build 4)", 14, true, Ui.NAVY), 8);
+        Ui.add(about, Ui.text(this, "Sistem Pertolongan Pertama & Skrining Hipotermia Lapangan Terintegrasi IoT & Cloud.", 14, false, Ui.MUTED), 12);
+
+        Ui.add(about, Ui.text(this, "SPESIFIKASI SISTEM & HARDWARE", 12, true, Ui.TEAL), 6);
+        Ui.add(about, Ui.text(this, "• Mikrokontroler: ESP32-C3 SuperMini\n" +
+                "• Sensor Suhu Kontak: DS18B20\n" +
+                "• Sensor Nadi / Pulse: MAX30102\n" +
+                "• Sensor Tekanan & Altitude: BMP280\n" +
+                "• Pemanas: Warmer Jacket Relay Module\n" +
+                "• Koneksi: Dual Mode (BLE Offline & Firebase RTDB)", 13, false, Ui.NAVY), 12);
+
+        Ui.add(about, Ui.text(this, "© 2026 HIFAKI Team • Hak Cipta Dilindungi", 12, false, Ui.MUTED), 0);
+        Ui.add(body, about, 14);
+
         LinearLayout mode = Ui.card(this);
         Ui.add(mode, Ui.text(this, "MODE OFFLINE", 13, true, Ui.TEAL), 8);
         Ui.add(mode, Ui.text(this, "Alat ↔ Bluetooth ↔ aplikasi. Semua catatan pertama kali disimpan di ponsel.", 15, false, Ui.NAVY), 10);
@@ -781,18 +956,61 @@ public final class MainActivity extends ComponentActivity implements BleClient.L
         Ui.add(body, note, 0);
     }
 
+    private void toggleWarmerState() {
+        warmerOn = !warmerOn;
+        int pwm = warmerOn ? 100 : 0;
+        updateWarmerUi();
+        
+        // Kirim perintah langsung ke ESP32 melalui BLE (Offline)
+        if (ble != null) {
+            String command = warmerOn ? "RELAY_ON" : "RELAY_OFF";
+            ble.sendCommand(command);
+        }
+        
+        if (mDatabase != null) {
+            try {
+                Map<String, Object> update = new HashMap<>();
+                update.put("heater_on", warmerOn);
+                update.put("heater_pwm", pwm);
+                update.put("relay", warmerOn ? 1 : 0);
+                update.put("warmer", warmerOn);
+                update.put("updatedAt", System.currentTimeMillis());
+                mDatabase.child("live_sensor").updateChildren(update);
+            } catch (Exception ignored) { }
+        }
+        toast(warmerOn ? "Jaket Penghangat dinyalakan (ON)" : "Jaket Penghangat dimatikan (OFF)");
+    }
+
+    private void updateWarmerUi() {
+        if (warmerStatusText != null && page == 1) {
+            warmerStatusText.setText(warmerOn ? "Pemanas Jaket: AKTIF (ON)" : "Pemanas Jaket: MATI (OFF)");
+            warmerStatusText.setTextColor(warmerOn ? Ui.RED : Ui.NAVY);
+        }
+        if (warmerButton != null && page == 1) {
+            warmerButton.setText(warmerOn ? "Matikan Jaket Penghangat (OFF)" : "Nyalakan Jaket Penghangat (ON)");
+            warmerButton.setBackground(Ui.bg(this, warmerOn ? Ui.RED : Ui.TEAL, 12));
+        }
+    }
+
     private void pushLiveSensorToFirebase(Reading reading) {
         if (mDatabase == null) return;
         try {
             Map<String, Object> liveMap = new HashMap<>();
             if (reading != null) {
                 liveMap.put("skinC", reading.skinC);
+                liveMap.put("skin_c", reading.skinC);
+                liveMap.put("core_c", reading.skinC);
                 liveMap.put("bpm", reading.bpm);
+                liveMap.put("spo2", reading.spo2);
                 liveMap.put("altitudeM", reading.altitudeM);
-                liveMap.put("batteryPct", reading.batteryPct);
+                liveMap.put("altitude_mdpl", reading.altitudeM);
                 liveMap.put("sequence", reading.sequence);
                 liveMap.put("receivedAt", reading.receivedAt);
             }
+            liveMap.put("heater_on", warmerOn);
+            liveMap.put("heater_pwm", warmerOn ? 100 : 0);
+            liveMap.put("relay", warmerOn ? 1 : 0);
+            liveMap.put("warmer", warmerOn);
             liveMap.put("bleStatus", bleStatus);
             if (gps != null) {
                 Location fix = gps.freshFix();
@@ -808,7 +1026,7 @@ public final class MainActivity extends ComponentActivity implements BleClient.L
         } catch (Exception ignored) { }
     }
 
-    private void pushRecordToFirebase(String id, String name, Reading reading, Float coreC, boolean danger, Location gpsFix) {
+    private void pushRecordToFirebase(String id, String name, Reading reading, Float coreC, boolean danger, Location gpsFix, String photoFile) {
         if (mDatabase == null || id == null) return;
         try {
             long now = System.currentTimeMillis();
@@ -820,6 +1038,7 @@ public final class MainActivity extends ComponentActivity implements BleClient.L
             map.put("danger", danger);
             map.put("skin_c", reading == null ? null : reading.skinC);
             map.put("bpm", reading == null ? null : reading.bpm);
+            map.put("spo2", reading == null ? null : reading.spo2);
             map.put("altitude_m", reading == null ? null : reading.altitudeM);
             map.put("core_c", coreC);
             map.put("latitude", gpsFix == null ? null : gpsFix.getLatitude());
@@ -827,6 +1046,12 @@ public final class MainActivity extends ComponentActivity implements BleClient.L
             map.put("gps_accuracy_m", gpsFix == null || !gpsFix.hasAccuracy() ? null : gpsFix.getAccuracy());
             map.put("gps_at", gpsFix == null ? null : gpsFix.getTime());
             map.put("source", "HIFAKI-C3");
+
+            if (photoFile != null) {
+                map.put("photo_file", photoFile);
+                String base64 = photos.getBase64(photoFile);
+                if (base64 != null) map.put("photo_base64", base64);
+            }
 
             mDatabase.child("records").child(id).setValue(map)
                     .addOnSuccessListener(aVoid -> {
@@ -848,6 +1073,7 @@ public final class MainActivity extends ComponentActivity implements BleClient.L
                 map.put("danger", r.danger);
                 map.put("skin_c", r.skinC);
                 map.put("bpm", r.bpm);
+                map.put("spo2", r.spo2);
                 map.put("altitude_m", r.altitudeM);
                 map.put("core_c", r.coreC);
                 map.put("latitude", r.latitude);
@@ -855,6 +1081,12 @@ public final class MainActivity extends ComponentActivity implements BleClient.L
                 map.put("gps_accuracy_m", r.gpsAccuracyM);
                 map.put("gps_at", r.gpsAt);
                 map.put("source", "HIFAKI-C3");
+
+                if (r.photoFile != null) {
+                    map.put("photo_file", r.photoFile);
+                    String base64 = photos.getBase64(r.photoFile);
+                    if (base64 != null) map.put("photo_base64", base64);
+                }
 
                 final String recordId = r.id;
                 mDatabase.child("records").child(recordId).setValue(map)
@@ -884,6 +1116,7 @@ public final class MainActivity extends ComponentActivity implements BleClient.L
 
                             Float skinC = getFloat(child, "skin_c", "skinC");
                             Integer bpm = getInt(child, "bpm");
+                            Integer spo2 = getInt(child, "spo2", "saturasi");
                             Integer altitudeM = getInt(child, "altitude_m", "altitudeM");
                             Float coreC = getFloat(child, "core_c", "coreC");
                             Double latitude = getDouble(child, "latitude");
@@ -891,8 +1124,18 @@ public final class MainActivity extends ComponentActivity implements BleClient.L
                             Float gpsAccuracyM = getFloat(child, "gps_accuracy_m", "gpsAccuracyM");
                             Long gpsAt = getLongTimestamp(child, "gps_at", "gpsAt");
 
+                            String photoFile = child.child("photo_file").getValue(String.class);
+                            String photoBase64 = child.child("photo_base64").getValue(String.class);
+                            if (photoBase64 == null) photoBase64 = child.child("photo").getValue(String.class);
+                            if (photoBase64 == null) photoBase64 = child.child("photo_data").getValue(String.class);
+
+                            if (photoBase64 != null && !photoBase64.trim().isEmpty()) {
+                                String savedName = photos.saveFromBase64(photoBase64);
+                                if (savedName != null) photoFile = savedName;
+                            }
+
                             store.upsertRemoteRecord(id, name, measuredAt, status, danger != null && danger,
-                                    skinC, bpm, altitudeM, coreC, latitude, longitude, gpsAccuracyM, gpsAt);
+                                    skinC, bpm, spo2, altitudeM, coreC, latitude, longitude, gpsAccuracyM, gpsAt, photoFile);
                         }
                         runOnUiThread(() -> {
                             if (page == 2) render();
@@ -905,6 +1148,58 @@ public final class MainActivity extends ComponentActivity implements BleClient.L
             public void onCancelled(DatabaseError error) { }
         };
         mDatabase.child("records").addValueEventListener(recordsListener);
+    }
+
+    private void listenForFirebaseLiveSensor() {
+        if (mDatabase == null || liveSensorListener != null) return;
+        liveSensorListener = new ValueEventListener() {
+            @Override
+            public void onDataChange(DataSnapshot snapshot) {
+                if (!snapshot.exists()) return;
+                try {
+                    Float coreC = getFloat(snapshot, "core_c", "coreC");
+                    Float skinC = getFloat(snapshot, "skinC", "skin_c", "temp_c", "tempC", "temperature", "temp", "suhu", "suhu_c", "suhu_kontak");
+                    Float temp = (coreC != null && coreC > 0) ? coreC : (skinC != null && skinC > 0 ? skinC : (coreC != null ? coreC : skinC));
+
+                    Integer bpm = getInt(snapshot, "bpm", "heart_rate", "pulse", "nadi", "hr");
+                    Integer spo2 = getInt(snapshot, "spo2", "saturasi");
+                    Integer altitudeM = getInt(snapshot, "altitude_mdpl", "altitudeM", "altitude_m", "altitude", "alt", "ketinggian", "height");
+                    Integer sequence = getInt(snapshot, "sequence");
+
+                    Boolean heaterOn = snapshot.child("heater_on").getValue(Boolean.class);
+                    Integer pwm = getInt(snapshot, "heater_pwm", "heaterPwm");
+                    Integer relay = getInt(snapshot, "relay");
+                    Boolean warmer = snapshot.child("warmer").getValue(Boolean.class);
+
+                    if (heaterOn != null || pwm != null || relay != null || warmer != null) {
+                        warmerOn = (heaterOn != null && heaterOn) ||
+                                   (pwm != null && pwm > 0) ||
+                                   (relay != null && relay > 0) ||
+                                   (warmer != null && warmer);
+                        runOnUiThread(() -> updateWarmerUi());
+                    }
+
+                    // ABAIKAN data dari Firebase jika sedang terkoneksi via BLE (Offline)
+                    if (ble != null && ble.isConnected()) {
+                        return;
+                    }
+
+                    long now = System.currentTimeMillis();
+
+                    if (temp != null || bpm != null || spo2 != null || altitudeM != null) {
+                        current = new Reading(temp, bpm, spo2, altitudeM, null,
+                                sequence != null ? sequence : 0, now);
+                        runOnUiThread(() -> {
+                            if (page == 1) updateMonitor();
+                        });
+                    }
+                } catch (Exception ignored) { }
+            }
+
+            @Override
+            public void onCancelled(DatabaseError error) { }
+        };
+        mDatabase.child("live_sensor").addValueEventListener(liveSensorListener);
     }
 
     private Long getLongTimestamp(DataSnapshot snapshot, String... keys) {

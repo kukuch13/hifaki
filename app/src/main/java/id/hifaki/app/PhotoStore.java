@@ -126,6 +126,41 @@ public final class PhotoStore {
         return validName(fileName) ? preview(new File(savedDir, fileName)) : null;
     }
 
+    public Bitmap fullSaved(String fileName) {
+        if (!validName(fileName)) return null;
+        File file = new File(savedDir, fileName);
+        if (!file.isFile()) return null;
+        return BitmapFactory.decodeFile(file.getAbsolutePath());
+    }
+
+    public String getBase64(String fileName) {
+        if (!validName(fileName)) return null;
+        File file = new File(savedDir, fileName);
+        if (!file.isFile()) return null;
+        try {
+            byte[] bytes = Files.readAllBytes(file.toPath());
+            return android.util.Base64.encodeToString(bytes, android.util.Base64.NO_WRAP);
+        } catch (Exception e) {
+            return null;
+        }
+    }
+
+    public String saveFromBase64(String base64Str) {
+        if (base64Str == null || base64Str.trim().isEmpty()) return null;
+        try {
+            byte[] bytes = android.util.Base64.decode(base64Str.trim(), android.util.Base64.DEFAULT);
+            if (bytes == null || bytes.length == 0) return null;
+            String fileName = UUID.randomUUID() + ".jpg";
+            File saved = new File(savedDir, fileName);
+            try (FileOutputStream out = new FileOutputStream(saved)) {
+                out.write(bytes);
+            }
+            return fileName;
+        } catch (Exception e) {
+            return null;
+        }
+    }
+
     public String persist(File draft) throws IOException {
         if (draft == null) return null;
         if (!draft.isFile() || !draft.getCanonicalFile().getParentFile().equals(draftDir.getCanonicalFile()))
